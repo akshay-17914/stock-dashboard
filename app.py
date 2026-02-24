@@ -66,7 +66,11 @@ company_map = dict(zip(company_df['NAME OF COMPANY'], company_df['Ticker']))
 # ======================================================
 # SIDEBAR SETTINGS
 # ======================================================
-
+exchange = st.sidebar.radio(
+    "Select Exchange",
+    ["NSE", "BSE"],
+    horizontal=True
+)
 st.sidebar.header("🔎 Search Stocks")
 
 selected_companies = st.sidebar.multiselect(
@@ -75,7 +79,10 @@ selected_companies = st.sidebar.multiselect(
 )
 
 selected_stocks = [company_map[c] for c in selected_companies]
-
+if exchange == "NSE":
+    ticker = [s + ".NS" for s in selected_stocks]
+else:
+    ticker = [s + ".BO" for s in selected_stocks]
 refresh_sec = st.sidebar.slider("Auto Refresh Seconds", 15, 300, 60)
 start_date = st.sidebar.date_input("Start Date", date(2023,1,1))
 end_date = st.sidebar.date_input("End Date", date.today())
@@ -194,4 +201,5 @@ if results:
 st.caption(f"Auto refresh every {refresh_sec} seconds")
 
 time.sleep(refresh_sec)
+
 st.rerun()
