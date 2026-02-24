@@ -1,205 +1,190 @@
-# ======================================================
-# INDIAN STOCK DASHBOARD (NSE + BSE)
-# Simple Quant Dashboard with:
-# - Company name search selector
-# - Sharpe / Return / Volatility scoring
-# - Automatic Buy/Sell rating
-# - Live refresh chart with MA signals
-# ======================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
-from datetime import date
 import time
+from datetime import date
+from twelvedata import TDClient
 
+# ===============================
+# PAGE CONFIG
+# ===============================
 st.set_page_config(page_title="Indian Stock Dashboard", layout="wide")
-st.title("📊 Indian Stock Analysis Dashboard")
 
-st.markdown("""
-Features:
-- NSE + BSE company search
-- Quant scoring (Return, Volatility, Sharpe)
-- Automatic Buy/Sell rating
-- Moving-average signal visualization
-- Auto-refresh charts
-""")
+# ===============================
+# API KEY (FROM STREAMLIT SECRETS)
+# ===============================
+API_KEY = st.secrets["TWELVEDATA_API_KEY"]
+td = TDClient(apikey=API_KEY)
 
-# ======================================================
-# LOAD NSE + BSE COMPANY LIST
-# ======================================================
-
-@st.cache_data
+# ===============================
+# LOAD ALL NSE + BSE COMPANIES
+# ===============================
+@st.cache_data(ttl=86400)
 def load_companies():
+
     frames = []
 
+    # NSE Companies
     try:
-        nse = pd.read_csv("https://archives.nseindia.com/content/equities/EQUITY_L.csv")
-        nse = nse[['NAME OF COMPANY','SYMBOL']].dropna()
-        nse['Ticker'] = nse['SYMBOL'] + '.NS'
-        frames.append(nse[['NAME OF COMPANY','Ticker']])
+        nse = pd.read_csv(
+            "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+        )
+        nse = nse[['NAME OF COMPANY', 'SYMBOL']]
+        nse['Exchange'] = "NSE"
+        frames.append(nse.rename(columns={
+            "NAME OF COMPANY": "Company",
+            "SYMBOL": "Symbol"
+        }))
     except:
         pass
 
+    # BSE Companies (public dataset mirror)
     try:
-        bse = pd.read_json("https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w")
-        bse = bse[['SCRIPNAME','SCRIP_CD']]
-        bse.columns = ['NAME OF COMPANY','Ticker']
-        bse['Ticker'] = bse['Ticker'].astype(str) + '.BO'
-        frames.append(bse)
+        bse = pd.read_csv(
+            "https://raw.githubusercontent.com/atulprakash-stock/BSE-dataset/main/bse_equity.csv"
+        )
+        bse = bse[['Security Name', 'Security Id']]
+        bse['Exchange'] = "BSE"
+        frames.append(bse.rename(columns={
+            "Security Name": "Company",
+            "Security Id": "Symbol"
+        }))
     except:
         pass
 
     if frames:
         df = pd.concat(frames).drop_duplicates()
-        return df.sort_values('NAME OF COMPANY')
+        return df.sort_values("Company")
 
+    # fallback
     return pd.DataFrame({
-        'NAME OF COMPANY':['Reliance Industries','TCS','Infosys'],
-        'Ticker':['RELIANCE.NS','TCS.NS','INFY.NS']
+        "Company": ["Reliance Industries", "TCS"],
+        "Symbol": ["RELIANCE", "TCS"],
+        "Exchange": ["NSE", "NSE"]
     })
 
-company_df = load_companies()
-company_map = dict(zip(company_df['NAME OF COMPANY'], company_df['Ticker']))
+companies_df = load_companies()
 
-# ======================================================
+# ===============================
 # SIDEBAR SETTINGS
-# ======================================================
+# ===============================
+st.sidebar.title("🔎 Stock Settings")
+
 exchange = st.sidebar.radio(
-    "Select Exchange",
+    "Exchange",
     ["NSE", "BSE"],
     horizontal=True
 )
-st.sidebar.header("🔎 Search Stocks")
 
-selected_companies = st.sidebar.multiselect(
-    "Search company name",
-    options=list(company_map.keys())
+filtered = companies_df[companies_df["Exchange"] == exchange]
+
+company = st.sidebar.selectbox(
+    "Search Company",
+    filtered["Company"]
 )
 
-selected_stocks = [company_map[c] for c in selected_companies]
-if exchange == "NSE":
-    ticker = [s + ".NS" for s in selected_stocks]
-else:
-    ticker = [s + ".BO" for s in selected_stocks]
-refresh_sec = st.sidebar.slider("Auto Refresh Seconds", 15, 300, 60)
-start_date = st.sidebar.date_input("Start Date", date(2023,1,1))
+symbol = filtered.loc[
+    filtered["Company"] == company,
+    "Symbol"
+].values[0]
+
+auto_refresh = st.sidebar.slider(
+    "Auto Refresh (seconds)",
+    0, 600, 0
+)
+
+start_date = st.sidebar.date_input("Start Date", date(2023, 1, 1))
 end_date = st.sidebar.date_input("End Date", date.today())
 
-# ======================================================
-# ANALYSIS FUNCTION
-# ======================================================
+# ===============================
+# FETCH DATA FROM TWELVEDATA
+# ===============================
+@st.cache_data(ttl=600)
+def get_data(symbol, exchange):
 
-@st.cache_data(ttl=60)
-def analyze_stock(symbol,start,end):
-    df = yf.download(symbol,start=start,end=end,progress=False)
+    ts = td.time_series(
+        symbol=symbol,
+        exchange=exchange,
+        interval="1day",
+        outputsize=500
+    )
 
-    if df.empty:
-        return None
+    df = ts.as_pandas()
+    df = df.sort_index()
 
-    if isinstance(df.columns,pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    return df
 
-    df = df[['Close']].dropna()
+data = get_data(symbol, exchange)
 
-    df['log_return'] = np.log(df['Close']/df['Close'].shift(1))
+# ===============================
+# MAIN DASHBOARD
+# ===============================
+st.title("📊 Indian Stock Analysis Dashboard")
 
-    annual_return = df['log_return'].mean()*252
-    volatility = df['log_return'].std()*np.sqrt(252)
+if data.empty:
+    st.error("No data found.")
+    st.stop()
 
-    sharpe = np.nan
-    if volatility!=0:
-        sharpe = annual_return/volatility
+data.rename(columns={"close": "Close"}, inplace=True)
 
-    # Moving average signals
-    df['ma20']=df['Close'].rolling(20).mean()
-    df['ma50']=df['Close'].rolling(50).mean()
+# ===============================
+# QUANT CALCULATIONS
+# ===============================
+data["Return"] = data["Close"].pct_change()
+data["MA20"] = data["Close"].rolling(20).mean()
+data["MA50"] = data["Close"].rolling(50).mean()
 
-    signal="Neutral"
-    if df['ma20'].iloc[-1] > df['ma50'].iloc[-1]:
-        signal="Buy"
-    else:
-        signal="Sell"
+annual_return = (data["Close"].iloc[-1] /
+                 data["Close"].iloc[0]) - 1
 
-    # Quant rating score
-    score=0
+volatility = data["Return"].std() * np.sqrt(252)
+sharpe = annual_return / volatility if volatility != 0 else 0
 
-    if sharpe>1:
-        score+=2
-    elif sharpe>0.5:
-        score+=1
+signal = "Buy" if data["MA20"].iloc[-1] > \
+    data["MA50"].iloc[-1] else "Sell"
 
-    if annual_return>0.15:
-        score+=2
-    elif annual_return>0.08:
-        score+=1
+score = 0
+if annual_return > 0:
+    score += 1
+if volatility < 0.4:
+    score += 1
+if sharpe > 1:
+    score += 1
+if signal == "Buy":
+    score += 1
 
-    if volatility<0.2:
-        score+=1
+rating = (
+    "Strong Buy" if score >= 3
+    else "Watchlist" if score == 2
+    else "Avoid"
+)
 
-    rating="Avoid"
-    if score>=5:
-        rating="Strong Buy"
-    elif score>=3:
-        rating="Watchlist"
+# ===============================
+# METRICS DISPLAY
+# ===============================
+st.subheader("📈 Quant Stock Ratings")
 
-    return {
-        "Stock":symbol,
-        "Return":annual_return,
-        "Volatility":volatility,
-        "Sharpe":sharpe,
-        "Signal":signal,
-        "Rating":rating,
-        "Score":score,
-        "Data":df
-    }
+metrics = pd.DataFrame({
+    "Stock": [f"{symbol} ({exchange})"],
+    "Annual Return": [f"{annual_return*100:.2f}%"],
+    "Volatility": [f"{volatility*100:.2f}%"],
+    "Sharpe Ratio": [round(sharpe, 2)],
+    "Signal": [signal],
+    "Rating": [rating],
+    "Score": [score]
+})
 
-# ======================================================
-# RUN ANALYSIS
-# ======================================================
+st.dataframe(metrics, use_container_width=True)
 
-results=[]
+# ===============================
+# CHART
+# ===============================
+st.subheader("Price Chart")
+st.line_chart(data[["Close", "MA20", "MA50"]])
 
-for stock in selected_stocks:
-    r=analyze_stock(stock,start_date,end_date)
-    if r:
-        results.append(r)
-
-# ======================================================
-# DISPLAY TABLE
-# ======================================================
-
-if results:
-    table=pd.DataFrame([
-        {
-            "Stock":r['Stock'],
-            "Annual Return":r['Return'],
-            "Volatility":r['Volatility'],
-            "Sharpe":r['Sharpe'],
-            "Signal":r['Signal'],
-            "Rating":r['Rating'],
-            "Score":r['Score']
-        }
-        for r in results
-    ])
-
-    table=table.sort_values("Score",ascending=False)
-
-    st.subheader("📈 Quant Stock Ratings")
-    st.dataframe(table.style.format({
-        "Annual Return":"{:.2%}",
-        "Volatility":"{:.2%}",
-        "Sharpe":"{:.2f}"
-    }))
-
-    for r in results:
-        st.subheader(r['Stock'])
-        st.write("Rating:",r['Rating'],"| Score:",r['Score'],"| Signal:",r['Signal'])
-        st.line_chart(r['Data'][['Close','ma20','ma50']].dropna())
-
-st.caption(f"Auto refresh every {refresh_sec} seconds")
-
-time.sleep(refresh_sec)
-
-st.rerun()
+# ===============================
+# AUTO REFRESH
+# ===============================
+if auto_refresh > 0:
+    time.sleep(auto_refresh)
+    st.rerun()
