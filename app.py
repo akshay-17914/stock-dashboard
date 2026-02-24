@@ -30,7 +30,7 @@ if API_KEY:
 # ===============================
 # LOAD NSE COMPANY LIST
 # ===============================
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=1800)
 def load_companies():
     try:
         nse = pd.read_csv(
@@ -187,10 +187,11 @@ if fetch_button:
         "Score": [score]
     })
 
-    st.dataframe(metrics, use_container_width=True)
+    st.dataframe(metrics, width="stretch")
 
     # ===============================
     # CHART
     # ===============================
     st.subheader("Price Chart")
     st.line_chart(data[["Close", "MA20", "MA50"]])
+
