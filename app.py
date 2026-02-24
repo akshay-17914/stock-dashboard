@@ -1,11 +1,13 @@
 # ======================================================
-# INDIAN STOCK DASHBOARD (NSE + BSE FULL)
-# TwelveData API Version (Production Safe)
+# INDIAN STOCK DASHBOARD (HYBRID DATA ENGINE)
+# Primary: TwelveData
+# Fallback: yfinance
 # ======================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 import time
 from datetime import date
 from twelvedata import TDClient
@@ -17,69 +19,39 @@ st.set_page_config(page_title="Indian Stock Dashboard", layout="wide")
 st.title("📊 Indian Stock Analysis Dashboard")
 
 # ===============================
-# API KEY (SECURE FROM STREAMLIT)
+# API KEY (SAFE)
 # ===============================
-API_KEY = st.secrets["TWELVEDATA_API_KEY"]
-td = TDClient(apikey=API_KEY)
+API_KEY = st.secrets.get("TWELVEDATA_API_KEY", None)
+
+td = None
+if API_KEY:
+    td = TDClient(apikey=API_KEY)
 
 # ===============================
-# LOAD NSE + BSE COMPANY LIST
+# LOAD NSE COMPANY LIST
 # ===============================
 @st.cache_data(ttl=86400)
 def load_companies():
-
-    frames = []
-
-    # NSE companies
     try:
         nse = pd.read_csv(
             "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
         )
-
         nse = nse[['NAME OF COMPANY', 'SYMBOL']]
-        nse['Exchange'] = "NSE"
-
-        frames.append(
-            nse.rename(columns={
-                "NAME OF COMPANY": "Company",
-                "SYMBOL": "Symbol"
-            })
-        )
+        nse.rename(columns={
+            "NAME OF COMPANY": "Company",
+            "SYMBOL": "Symbol"
+        }, inplace=True)
+        return nse.sort_values("Company")
     except:
-        pass
-
-    # Simple fallback if BSE list unavailable
-    # (BSE official API is unstable for cloud apps)
-    try:
-        bse = pd.read_csv(
-            "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        )
-
-        bse = bse[['Name','Symbol']]
-        bse['Exchange'] = "BSE"
-
-        frames.append(
-            bse.rename(columns={
-                "Name":"Company"
-            })
-        )
-    except:
-        pass
-
-    if frames:
-        return pd.concat(frames).drop_duplicates().sort_values("Company")
-
-    return pd.DataFrame({
-        "Company":["Reliance Industries"],
-        "Symbol":["RELIANCE"],
-        "Exchange":["NSE"]
-    })
-
+        return pd.DataFrame({
+            "Company": ["Reliance Industries", "TCS"],
+            "Symbol": ["RELIANCE", "TCS"]
+        })
 
 companies_df = load_companies()
 
 # ===============================
-# SIDEBAR SETTINGS
+# SIDEBAR
 # ===============================
 st.sidebar.header("🔎 Stock Settings")
 
@@ -89,64 +61,82 @@ exchange = st.sidebar.radio(
     horizontal=True
 )
 
-filtered = companies_df[companies_df["Exchange"] == exchange]
-
 company = st.sidebar.selectbox(
     "Search Company",
-    filtered["Company"]
+    companies_df["Company"]
 )
 
-symbol = filtered.loc[
-    filtered["Company"] == company,
+symbol = companies_df.loc[
+    companies_df["Company"] == company,
     "Symbol"
 ].values[0]
 
-start_date = st.sidebar.date_input("Start Date", date(2023,1,1))
+start_date = st.sidebar.date_input("Start Date", date(2023, 1, 1))
 end_date = st.sidebar.date_input("End Date", date.today())
 
-# Prevent excessive API refresh
 fetch_button = st.sidebar.button("Fetch Data")
 
 # ===============================
-# FETCH DATA SAFELY
+# HYBRID DATA FETCH
 # ===============================
-@st.cache_data(ttl=3600)
-def get_data(symbol, exchange):
+@st.cache_data(ttl=1800)
+def fetch_data(symbol, exchange):
 
+    # --- Try TwelveData first ---
+    if td:
+        try:
+            ts = td.time_series(
+                symbol=symbol,
+                exchange=exchange,
+                interval="1day",
+                outputsize=500
+            )
+            df = ts.as_pandas()
+
+            if df is not None and not df.empty:
+                df = df.sort_index()
+                df.rename(columns={"close": "Close"}, inplace=True)
+                return df, "TwelveData"
+
+        except:
+            pass
+
+    # --- Fallback to yfinance ---
     try:
-        ts = td.time_series(
-            symbol=symbol,
-            exchange=exchange,
-            interval="1day",
-            outputsize=500
+        ticker = symbol + (".NS" if exchange == "NSE" else ".BO")
+
+        df = yf.download(
+            ticker,
+            start=start_date,
+            end=end_date,
+            progress=False
         )
 
-        df = ts.as_pandas()
+        if not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
 
-        if df is None or df.empty:
-            return None
+            df = df[['Close']].dropna()
+            return df, "yfinance"
 
-        df = df.sort_index()
-        return df
+    except:
+        pass
 
-    except Exception as e:
-        return str(e)
+    return None, None
 
 
+# ===============================
+# RUN ANALYSIS
+# ===============================
 if fetch_button:
 
-    data = get_data(symbol, exchange)
-
-    if isinstance(data, str):
-        st.error("API Error:")
-        st.code(data)
-        st.stop()
+    data, source = fetch_data(symbol, exchange)
 
     if data is None:
-        st.error("No data returned.")
+        st.error("No data available from TwelveData or yfinance.")
         st.stop()
 
-    data.rename(columns={"close": "Close"}, inplace=True)
+    st.success(f"Data source: {source}")
 
     # ===============================
     # QUANT CALCULATIONS
@@ -166,11 +156,7 @@ if fetch_button:
     signal = "Buy" if data["MA20"].iloc[-1] > \
         data["MA50"].iloc[-1] else "Sell"
 
-    # ===============================
-    # SCORING SYSTEM
-    # ===============================
     score = 0
-
     if annual_return > 0:
         score += 1
     if volatility < 0.4:
@@ -187,7 +173,7 @@ if fetch_button:
     )
 
     # ===============================
-    # METRICS DISPLAY
+    # DISPLAY METRICS
     # ===============================
     st.subheader("📈 Quant Stock Ratings")
 
@@ -204,8 +190,7 @@ if fetch_button:
     st.dataframe(metrics, use_container_width=True)
 
     # ===============================
-    # PRICE CHART
+    # CHART
     # ===============================
     st.subheader("Price Chart")
     st.line_chart(data[["Close", "MA20", "MA50"]])
-
