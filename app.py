@@ -171,6 +171,20 @@ if fetch_button:
         st.error("Invalid data format.")
         st.stop()
 
+    # --- Ensure Close column exists safely ---
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
+    if "close" in data.columns and "Close" not in data.columns:
+        data.rename(columns={"close": "Close"}, inplace=True)
+
+    if "Adj Close" in data.columns and "Close" not in data.columns:
+        data.rename(columns={"Adj Close": "Close"}, inplace=True)
+
+    if "Close" not in data.columns:
+        st.error("Price data missing 'Close' column from data provider.")
+        st.stop()
+
     data = data.dropna(subset=["Close"])
 
     if len(data) < 50:
