@@ -47,20 +47,44 @@ API_KEY = st.secrets.get("TWELVEDATA_API_KEY", None)
 td = TDClient(apikey=API_KEY) if API_KEY else None
 
 # ---------------- LOAD COMPANY LIST ----------------
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=86400)
 def load_companies():
+    frames = []
+
+    # --- NSE LIST ---
     try:
-        df = pd.read_csv(
+        nse = pd.read_csv(
             "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
         )
-        df = df[['NAME OF COMPANY', 'SYMBOL']]
-        df.columns = ['Company', 'Symbol']
-        return df.sort_values("Company")
+        nse = nse[['NAME OF COMPANY','SYMBOL']]
+        nse.columns = ['Company','Symbol']
+        nse['Exchange'] = 'NSE'
+        frames.append(nse)
     except:
-        return pd.DataFrame({
-            "Company": ["Reliance Industries", "TCS"],
-            "Symbol": ["RELIANCE", "TCS"]
-        })
+        pass
+
+    # --- BSE LIST ---
+    try:
+        bse = pd.read_json(
+            "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
+        )
+        bse = bse[['SCRIPNAME','SCRIP_CD']]
+        bse.columns = ['Company','Symbol']
+        bse['Exchange'] = 'BSE'
+        frames.append(bse)
+    except:
+        pass
+
+    if frames:
+        df = pd.concat(frames).drop_duplicates(subset=['Company'])
+        return df.sort_values('Company')
+
+    # Last fallback (rare)
+    return pd.DataFrame({
+        'Company':['Reliance Industries','TCS','Infosys'],
+        'Symbol':['RELIANCE','TCS','INFY'],
+        'Exchange':['NSE','NSE','NSE']
+    })
 
 companies_df = load_companies()
 
@@ -217,3 +241,5 @@ if fetch_button:
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
+
+
