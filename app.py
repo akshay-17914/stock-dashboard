@@ -263,12 +263,14 @@ if fetch_button:
         name="MA50",
         line=dict(width=1, dash='dash')
     ))
+    
       fig.add_trace(go.Scatter(
         x=data.index,
         y=data["MA100"],
         name="MA100",
         line=dict(width=1, dash='dash')
     ))
+
       fig.add_trace(go.Scatter(
         x=data.index,
         y=data["MA200"],
@@ -297,6 +299,7 @@ if fetch_button:
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
+
 
 
 
