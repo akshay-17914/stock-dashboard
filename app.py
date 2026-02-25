@@ -97,13 +97,18 @@ exchange = st.sidebar.radio(
     horizontal=True
 )
 
+# Filter companies based on selected exchange
+filtered_companies = companies_df[
+    companies_df["Exchange"] == exchange
+]
+
 company = st.sidebar.selectbox(
     "Search Company",
-    companies_df["Company"]
+    filtered_companies["Company"]
 )
 
-symbol = companies_df.loc[
-    companies_df["Company"] == company, "Symbol"
+symbol = filtered_companies.loc[
+    filtered_companies["Company"] == company, "Symbol"
 ].values[0]
 
 start_date = st.sidebar.date_input("Start Date", date(2023, 1, 1))
@@ -195,7 +200,6 @@ if fetch_button:
     data["Return"] = data["Close"].pct_change()
     data["MA20"] = data["Close"].rolling(20).mean()
     data["MA50"] = data["Close"].rolling(50).mean()
-    
 
     annual_return = (data["Close"].iloc[-1] / data["Close"].iloc[0]) - 1
     volatility = data["Return"].std() * np.sqrt(252)
@@ -262,7 +266,6 @@ if fetch_button:
         name="MA50",
         line=dict(width=1, dash='dash')
     ))
-    
 
     # Cumulative Return (secondary axis style)
     fig.add_trace(go.Scatter(
@@ -285,10 +288,3 @@ if fetch_button:
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
-
-
-
-
-
-
-
