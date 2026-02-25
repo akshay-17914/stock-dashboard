@@ -231,29 +231,59 @@ if fetch_button:
 
     st.markdown("---")
 
-    # ----- CANDLESTICK CHART -----
-    if all(col in data.columns for col in ["Open", "High", "Low", "Close"]):
-        st.markdown('<div class="section-title">📈 Price Chart</div>', unsafe_allow_html=True)
+        # ----- QUANT CHART (Performance + Signals) -----
+    st.markdown('<div class="section-title">📊 Quant Performance Chart</div>', unsafe_allow_html=True)
 
-        fig = go.Figure(data=[go.Candlestick(
-            x=data.index,
-            open=data["Open"],
-            high=data["High"],
-            low=data["Low"],
-            close=data["Close"]
-        )])
+    # Cumulative Return
+    data["Cumulative Return"] = (1 + data["Return"].fillna(0)).cumprod()
 
-        fig.update_layout(
-            template="plotly_dark",
-            height=600,
-            xaxis_rangeslider_visible=False
-        )
+    fig = go.Figure()
 
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.line_chart(data[["Close", "MA20", "MA50"]])
+    # Price Trend
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["Close"],
+        name="Price",
+        line=dict(width=1)
+    ))
+
+    # Moving Averages
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["MA20"],
+        name="MA20",
+        line=dict(width=1, dash='dot')
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["MA50"],
+        name="MA50",
+        line=dict(width=1, dash='dash')
+    ))
+
+    # Cumulative Return (secondary axis style)
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["Cumulative Return"],
+        name="Cumulative Return",
+        line=dict(width=2)
+    ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=600,
+        xaxis_title="Date",
+        yaxis_title="Value",
+        legend_title="Indicators",
+        xaxis_rangeslider_visible=False
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
+
+
 
 
