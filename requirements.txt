@@ -1,6 +1,7 @@
-streamlit==1.54.0
+streamlit
 pandas
 numpy
 yfinance
-requests
 twelvedata
+plotly
+requests
