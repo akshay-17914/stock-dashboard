@@ -195,6 +195,8 @@ if fetch_button:
     data["Return"] = data["Close"].pct_change()
     data["MA20"] = data["Close"].rolling(20).mean()
     data["MA50"] = data["Close"].rolling(50).mean()
+    data["MA100"] = data["Close"].rolling(100).mean()
+    data["MA200"] = data["Close"].rolling(200).mean()
 
     annual_return = (data["Close"].iloc[-1] / data["Close"].iloc[0]) - 1
     volatility = data["Return"].std() * np.sqrt(252)
@@ -261,6 +263,18 @@ if fetch_button:
         name="MA50",
         line=dict(width=1, dash='dash')
     ))
+      fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["MA100"],
+        name="MA100",
+        line=dict(width=1, dash='dash')
+    ))
+      fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["MA200"],
+        name="MA200",
+        line=dict(width=1, dash='dash')
+    ))
 
     # Cumulative Return (secondary axis style)
     fig.add_trace(go.Scatter(
@@ -283,6 +297,7 @@ if fetch_button:
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
+
 
 
 
