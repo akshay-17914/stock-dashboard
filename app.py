@@ -1,9 +1,8 @@
 # ======================================================
-# INDIAN STOCK DASHBOARD – PRO UI VERSION
+# INDIAN STOCK DASHBOARD – PRO UI (STABLE VERSION)
 # Hybrid Data Engine (TwelveData + yfinance fallback)
-# Cleaner Professional Dark Layout
-# Structured Visual Hierarchy
-# Metric Cards + Fetch Workflow
+# Error-safe calculations
+# Cleaner professional dark layout
 # ======================================================
 
 import streamlit as st
@@ -33,7 +32,7 @@ st.markdown("""
         text-align:center;
     }
     .section-title {
-        font-size:26px;
+        font-size:24px;
         font-weight:600;
         margin-top:20px;
         margin-bottom:10px;
@@ -42,7 +41,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("## 📊 Indian Stock Analysis Dashboard")
-st.markdown("Quantitative analysis with structured professional UI.")
 
 # ---------------- API SETUP ----------------
 API_KEY = st.secrets.get("TWELVEDATA_API_KEY", None)
@@ -93,7 +91,7 @@ fetch_button = st.sidebar.button("🚀 Fetch Data")
 @st.cache_data(ttl=1800)
 def fetch_data(symbol, exchange):
 
-    # TwelveData Primary
+    # --- TwelveData Primary ---
     if td:
         try:
             ts = td.time_series(
@@ -116,18 +114,20 @@ def fetch_data(symbol, exchange):
         except:
             pass
 
-    # yfinance Fallback
+    # --- yfinance fallback ---
     ticker = symbol + (".NS" if exchange == "NSE" else ".BO")
 
-    df = yf.download(
-        ticker,
-        start=start_date,
-        end=end_date,
-        progress=False
-    )
-
-    if not df.empty:
-        return df, "yfinance"
+    try:
+        df = yf.download(
+            ticker,
+            start=start_date,
+            end=end_date,
+            progress=False
+        )
+        if not df.empty:
+            return df, "yfinance"
+    except:
+        pass
 
     return None, None
 
@@ -142,16 +142,34 @@ if fetch_button:
 
     st.success(f"Data source: {source}")
 
+    # Ensure required columns exist
+    if "Close" not in data.columns:
+        st.error("Invalid data format.")
+        st.stop()
+
+    data = data.dropna(subset=["Close"])
+
+    if len(data) < 50:
+        st.error("Not enough data for analysis.")
+        st.stop()
+
     # ----- CALCULATIONS -----
     data["Return"] = data["Close"].pct_change()
     data["MA20"] = data["Close"].rolling(20).mean()
     data["MA50"] = data["Close"].rolling(50).mean()
 
-    annual_return = (data["Close"].iloc[-1] /
-                     data["Close"].iloc[0]) - 1
-
+    annual_return = (data["Close"].iloc[-1] / data["Close"].iloc[0]) - 1
     volatility = data["Return"].std() * np.sqrt(252)
-    sharpe = annual_return / volatility if volatility else 0
+
+    if pd.isna(volatility) or volatility == 0:
+        sharpe = 0
+    else:
+        sharpe = annual_return / volatility
+
+    # Replace NaN safely
+    annual_return = 0 if pd.isna(annual_return) else annual_return
+    volatility = 0 if pd.isna(volatility) else volatility
+    sharpe = 0 if pd.isna(sharpe) else sharpe
 
     signal = "BUY" if data["MA20"].iloc[-1] > \
         data["MA50"].iloc[-1] else "SELL"
@@ -162,45 +180,40 @@ if fetch_button:
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Annual Return", f"{annual_return*100:.2f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.metric("Annual Return", f"{float(annual_return)*100:.2f}%")
 
     with col2:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Volatility", f"{volatility*100:.2f}%")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.metric("Volatility", f"{float(volatility)*100:.2f}%")
 
     with col3:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Sharpe Ratio", f"{sharpe:.2f}")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.metric("Sharpe Ratio", f"{float(sharpe):.2f}")
 
     with col4:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         st.metric("Signal", signal)
-        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ----- IMPROVED CANDLESTICK CHART -----
-    st.markdown('<div class="section-title">📈 Price Chart</div>', unsafe_allow_html=True)
+    # ----- CANDLESTICK CHART -----
+    if all(col in data.columns for col in ["Open", "High", "Low", "Close"]):
+        st.markdown('<div class="section-title">📈 Price Chart</div>', unsafe_allow_html=True)
 
-    fig = go.Figure(data=[go.Candlestick(
-        x=data.index,
-        open=data["Open"],
-        high=data["High"],
-        low=data["Low"],
-        close=data["Close"]
-    )])
+        fig = go.Figure(data=[go.Candlestick(
+            x=data.index,
+            open=data["Open"],
+            high=data["High"],
+            low=data["Low"],
+            close=data["Close"]
+        )])
 
-    fig.update_layout(
-        template="plotly_dark",
-        height=600,
-        xaxis_rangeslider_visible=False
-    )
+        fig.update_layout(
+            template="plotly_dark",
+            height=600,
+            xaxis_rangeslider_visible=False
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.line_chart(data[["Close", "MA20", "MA50"]])
 
 else:
     st.info("Select stock parameters and click Fetch Data to begin analysis.")
