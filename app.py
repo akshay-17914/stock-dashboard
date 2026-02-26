@@ -10,6 +10,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import date
 import time
+import os
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -24,7 +25,8 @@ st.title("📊 NSE Quant Stock Dashboard")
 @st.cache_data(ttl=86400)
 def load_nse_universe():
     try:
-        df = pd.read_csv("nse_universe.csv")
+        file_path = os.path.join(os.getcwd(), "nse_universe.csv")
+        df = pd.read_csv(file_path)
         df = df.dropna()
         return df.sort_values("Company")
     except Exception as e:
@@ -172,3 +174,4 @@ if fetch_button:
 if auto_refresh > 0:
     time.sleep(auto_refresh)
     st.rerun()
+
