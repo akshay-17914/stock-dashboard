@@ -1,15 +1,13 @@
 # ======================================================
-# NSE STOCK DASHBOARD – PRODUCTION VERSION
-# Data Source: Local NSE Universe + yfinance
+# NSE QUANT DASHBOARD – DATABASE VERSION
+# Reads from local price_db (NO live API calls)
 # ======================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
 from datetime import date
-import time
 import os
 
 # ---------------- PAGE CONFIG ----------------
@@ -19,24 +17,22 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 NSE Quant Stock Dashboard")
+st.title("📊 NSE Quant Stock Dashboard (Database Mode)")
 
 # ---------------- LOAD NSE UNIVERSE ----------------
 @st.cache_data(ttl=86400)
-def load_nse_universe():
+def load_universe():
     try:
-        file_path = os.path.join(os.getcwd(), "nse_universe.csv")
-        df = pd.read_csv(file_path)
-        df = df.dropna()
+        df = pd.read_csv("nse_universe.csv")
         return df.sort_values("Company")
-    except Exception as e:
-        st.error("NSE universe file missing. Run update script first.")
-        return pd.DataFrame({
-            "Company": ["Reliance Industries"],
-            "Symbol": ["RELIANCE"]
-        })
+    except:
+        st.error("Run update_nse_universe.py first.")
+        return pd.DataFrame()
 
-companies_df = load_nse_universe()
+companies_df = load_universe()
+
+if companies_df.empty:
+    st.stop()
 
 # ---------------- SIDEBAR ----------------
 st.sidebar.header("🔎 Stock Settings")
@@ -54,124 +50,110 @@ symbol = companies_df.loc[
 start_date = st.sidebar.date_input("Start Date", date(2023, 1, 1))
 end_date = st.sidebar.date_input("End Date", date.today())
 
-auto_refresh = st.sidebar.slider("Auto Refresh (seconds)", 0, 300, 0)
-
-fetch_button = st.sidebar.button("🚀 Fetch Data")
-
-# ---------------- FETCH DATA ----------------
+# ---------------- LOAD PRICE DATA FROM DATABASE ----------------
 @st.cache_data(ttl=60)
-def fetch_data(symbol, start, end):
+def load_price_data(symbol):
 
-    ticker = symbol + ".NS"
+    file_path = f"price_db/{symbol}.csv"
 
-    try:
-        df = yf.download(
-            ticker,
-            start=start,
-            end=end,
-            progress=False
-        )
-
-        if df.empty:
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df = df[['Close']].dropna()
-
-        return df
-
-    except:
+    if not os.path.exists(file_path):
         return None
 
-# ---------------- MAIN WORKFLOW ----------------
-if fetch_button:
+    df = pd.read_csv(file_path, index_col=0, parse_dates=True)
 
-    data = fetch_data(symbol, start_date, end_date)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
-    if data is None:
-        st.error("No price data available.")
-        st.stop()
+    if "Close" not in df.columns:
+        return None
 
-    # ---------------- QUANT CALCULATIONS ----------------
-    data["Return"] = data["Close"].pct_change()
-    data["MA20"] = data["Close"].rolling(20).mean()
-    data["MA50"] = data["Close"].rolling(50).mean()
+    return df
 
-    annual_return = (data["Close"].iloc[-1] /
-                     data["Close"].iloc[0]) - 1
+data = load_price_data(symbol)
 
-    volatility = data["Return"].std() * np.sqrt(252)
-    sharpe = annual_return / volatility if volatility != 0 else 0
+if data is None:
+    st.error("No local price data found. Run update_prices.py first.")
+    st.stop()
 
-    signal = "BUY" if data["MA20"].iloc[-1] > \
-        data["MA50"].iloc[-1] else "SELL"
+# Filter date range
+data = data[(data.index >= pd.to_datetime(start_date)) &
+            (data.index <= pd.to_datetime(end_date))]
 
-    # ---------------- SCORING ----------------
-    score = 0
+if len(data) < 50:
+    st.warning("Not enough historical data for analysis.")
+    st.stop()
 
-    if annual_return > 0:
-        score += 1
-    if volatility < 0.4:
-        score += 1
-    if sharpe > 1:
-        score += 1
-    if signal == "BUY":
-        score += 1
+# ---------------- QUANT CALCULATIONS ----------------
+data["Return"] = data["Close"].pct_change()
+data["MA20"] = data["Close"].rolling(20).mean()
+data["MA50"] = data["Close"].rolling(50).mean()
 
-    rating = (
-        "Strong Buy" if score >= 3
-        else "Watchlist" if score == 2
-        else "Avoid"
-    )
+annual_return = (data["Close"].iloc[-1] /
+                 data["Close"].iloc[0]) - 1
 
-    # ---------------- METRICS DISPLAY ----------------
-    st.subheader("📈 Quant Stock Ratings")
+volatility = data["Return"].std() * np.sqrt(252)
+sharpe = annual_return / volatility if volatility != 0 else 0
 
-    col1, col2, col3, col4 = st.columns(4)
+signal = "BUY" if data["MA20"].iloc[-1] > \
+    data["MA50"].iloc[-1] else "SELL"
 
-    col1.metric("Annual Return", f"{annual_return*100:.2f}%")
-    col2.metric("Volatility", f"{volatility*100:.2f}%")
-    col3.metric("Sharpe Ratio", f"{sharpe:.2f}")
-    col4.metric("Signal", signal)
+# ---------------- SCORING ----------------
+score = 0
+if annual_return > 0:
+    score += 1
+if volatility < 0.4:
+    score += 1
+if sharpe > 1:
+    score += 1
+if signal == "BUY":
+    score += 1
 
-    st.write("### Rating:", rating)
+rating = (
+    "Strong Buy" if score >= 3
+    else "Watchlist" if score == 2
+    else "Avoid"
+)
 
-    # ---------------- CHART ----------------
-    st.subheader("Price Chart")
+# ---------------- METRICS ----------------
+st.subheader("📈 Quant Metrics")
 
-    fig = go.Figure()
+col1, col2, col3, col4 = st.columns(4)
 
-    fig.add_trace(go.Scatter(
-        x=data.index,
-        y=data["Close"],
-        name="Close"
-    ))
+col1.metric("Annual Return", f"{annual_return*100:.2f}%")
+col2.metric("Volatility", f"{volatility*100:.2f}%")
+col3.metric("Sharpe Ratio", f"{sharpe:.2f}")
+col4.metric("Signal", signal)
 
-    fig.add_trace(go.Scatter(
-        x=data.index,
-        y=data["MA20"],
-        name="MA20"
-    ))
+st.write("### Rating:", rating)
 
-    fig.add_trace(go.Scatter(
-        x=data.index,
-        y=data["MA50"],
-        name="MA50"
-    ))
+# ---------------- CHART ----------------
+st.subheader("📊 Price Chart")
 
-    fig.update_layout(
-        template="plotly_dark",
-        height=600,
-        xaxis_title="Date",
-        yaxis_title="Price"
-    )
+fig = go.Figure()
 
-    st.plotly_chart(fig, use_container_width=True)
+fig.add_trace(go.Scatter(
+    x=data.index,
+    y=data["Close"],
+    name="Close"
+))
 
-# ---------------- AUTO REFRESH ----------------
-if auto_refresh > 0:
-    time.sleep(auto_refresh)
-    st.rerun()
+fig.add_trace(go.Scatter(
+    x=data.index,
+    y=data["MA20"],
+    name="MA20"
+))
 
+fig.add_trace(go.Scatter(
+    x=data.index,
+    y=data["MA50"],
+    name="MA50"
+))
+
+fig.update_layout(
+    template="plotly_dark",
+    height=600,
+    xaxis_title="Date",
+    yaxis_title="Price"
+)
+
+st.plotly_chart(fig, use_container_width=True)
